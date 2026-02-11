@@ -1,0 +1,500 @@
+manifest:
+  version: "0.1.3"
+  schema: https://a2as.org/cert/schema
+  subject:
+    name: margaretmz/ai-fashion-house
+    source: https://github.com/margaretmz/ai-fashion-house
+    branch: main
+    commit: "3550dba7"
+    scope: [main.py, src/ai_fashion_house/agents/fashion_design_agent/agent.py, src/ai_fashion_house/agents/marketing_agent/agent.py,
+      src/ai_fashion_house/agents/marketing_agent/imagen.py, src/ai_fashion_house/agents/marketing_agent/veo.py, src/ai_fashion_house/agents/met_rag_agent/agent.py,
+      src/ai_fashion_house/agents/met_rag_agent/tools.py, src/ai_fashion_house/agents/search_agent/agent.py, src/ai_fashion_house/web/api.py]
+  issued:
+    by: A2AS.org
+    at: '2026-02-11T16:37:54Z'
+    url: https://a2as.org/certified/agents/margaretmz/ai-fashion-house
+  signatures:
+    digest: sha256:IotECI-xxYOMm4s4WUu_3zdU3sIKBdiHXK-_fRvvY8M
+    key: ed25519:wyx2047QouurT965EpAt56fSARxq2gruVLI9QJ1KjzM
+    sig: ed25519:3JYgt_FsFNcaBnBfYVWdjcWuOmHZOFSlcOCUNsqRG9L-RH2EwuiVzQYi6uGwy0Y6ploM45-WyJrZXjpCHxuyCQ
+
+agents:
+  prompt_writer_agent:
+    type: instance
+    models: [gemini-2.0-flash]
+    tools: [get_fashion_model_details]
+    params:
+      name: prompt_writer_agent
+      description: Transforms visual references and historical context into a vivid, fashion-forward prompt for AI media generation.
+      instruction: get_instructions()
+      output_key: enhanced_prompt
+      generate_content_config:
+        class: GenerateContentConfig
+        temperature: "0.5"
+  research_agent:
+    type: instance
+    params:
+      name: research_agent
+      description: Coordinates the execution of the met_rag_agent and search agent agents to gather fashion inspiration and
+        insights.
+      sub_agents: [met_rag_agent, search_agent]
+  root_agent.0:
+    type: instance
+    models: [gemini-2.0-flash]
+    tools: [fashion_design_agent_tool, generate_image, generate_video, load_artifacts]
+    params:
+      name: marketing_agent
+      instruction: get_instructions()
+      description: Coordinates the fashion creative process by running style agent and generating fashion media.
+      generate_content_config:
+        class: GenerateContentConfig
+        temperature: "0.5"
+      output_key: social_media_post
+      instance: root_agent
+  root_agent.1:
+    type: instance
+    params:
+      name: fashion_design_agent
+      description: Coordinates the fashion inspiration gathering process and prompt writing for AI media generation.
+      instance: root_agent
+      sub_agents: [research_agent, prompt_writer_agent]
+  root_agent.2:
+    type: instance
+    models: [gemini-2.0-flash-001]
+    tools: [google_search]
+    params:
+      name: search_agent
+      description: Search the web for visual inspiration related to the user's fashion concept.
+      instruction: get_instructions()
+      output_key: search_results
+      instance: root_agent
+  root_agent.3:
+    type: instance
+    models: [gemini-2.0-flash-001]
+    tools: [retrieve_met_images]
+    params:
+      name: met_rag_agent
+      description: Search The Met's public collection for historical fashion images and artifacts.
+      instruction: get_instructions()
+      output_key: met_rag_results
+      instance: root_agent
+
+models:
+  gemini-2.0-flash:
+    type: literal
+    agents: [root_agent.0, prompt_writer_agent]
+  gemini-2.0-flash-001:
+    type: literal
+    agents: [root_agent.2, root_agent.3]
+
+tools:
+  fashion_design_agent_tool:
+    type: function
+    agents: [root_agent.0]
+  generate_image:
+    type: function
+    agents: [root_agent.0]
+    params:
+      description: |-
+        Generate an image using a text prompt. Optionally save the result via a ToolContext.
+
+        Args:
+            enhanced_prompt (str): A descriptive text prompt for image generation.
+            tool_context (Optional[ToolContext]): Optional context to save the artifact remotely.
+
+        Returns:
+            dict[str, str]: A dictionary containing the status and message of the operation.
+  generate_video:
+    type: function
+    agents: [root_agent.0]
+    params:
+      description: |-
+        Main entry point to generate a fashion-themed video from a single input image.
+
+        This function supports loading from a ToolContext or directly from local disk,
+        uploading the image to GCS, and using Gemini to generate video content with a fallback
+        to dynamic prompt generation if the initial request fails.
+
+        Args:
+            image_gcs_uri (str): The GCS URI of the input image to use for video generation.
+            tool_context (Optional[ToolContext]): Optional context for loading artifacts.
+
+        Returns:
+            dict[str, Any]: A dictionary containing the result status and message.
+  get_fashion_model_details:
+    type: function
+    agents: [prompt_writer_agent]
+  google_search:
+    type: module
+    agents: [root_agent.2]
+  load_artifacts:
+    type: module
+    agents: [root_agent.0]
+  retrieve_met_images:
+    type: function
+    agents: [root_agent.3]
+    params:
+      description: |-
+        Orchestrates the full RAG pipeline: refines the user query, retrieves similar embeddings,
+        and returns a list of matching GCS image URLs.
+
+        Also generates a moodboard of the top results.
+
+        Args:
+            user_query (str): Initial query string describing the desired fashion style.
+            top_k (int, optional): Number of top image results to return. Defaults to 6.
+            search_fraction (float, optional): Search scope for approximate vector match. Defaults to 0.01.
+            tool_context (ToolContext, optional): Context for tool execution, if needed.
+
+        Returns:
+            Optional[List[str]]: A list of GCS URLs to matching images, or None if no matches found.
+
+teams:
+  research_agent:
+    type: parallel
+    agents: [research_agent, met_rag_agent, search_agent]
+  root_agent.1:
+    type: sequential
+    agents: [root_agent.1, research_agent, prompt_writer_agent]
+
+imports:
+  ADKEvent: google.adk.events.event.Event
+  Agent: google.adk.agents.Agent
+  agent: agent
+  agent_tool: google.adk.tools.agent_tool
+  aiofiles: aiofiles
+  Annotated: typing_extensions.Annotated
+  api: api.api
+  asynccontextmanager: contextlib.asynccontextmanager
+  asyncio: asyncio
+  base64: base64
+  BaseAgent: google.adk.agents.BaseAgent
+  BaseModel: pydantic.BaseModel
+  bigquery: google.cloud.bigquery
+  BytesIO: io.BytesIO
+  CallbackContext: google.adk.agents.callback_context.CallbackContext
+  ClientError: google.genai.errors.ClientError
+  CORSMiddleware: fastapi.middleware.cors.CORSMiddleware
+  create_moodboard: ai_fashion_house.utils.image_utils.create_moodboard
+  create_rag: ai_fashion_house.create_rag.main
+  download_media_file_from_gcs: ai_fashion_house.utils.gcp_utils.download_media_file_from_gcs
+  fashion_design_agent: ai_fashion_house.agents.fashion_design_agent.agent.root_agent
+  FastAPI: fastapi.FastAPI
+  find_dotenv: dotenv.find_dotenv
+  generate_image: ai_fashion_house.agents.marketing_agent.imagen.generate_image
+  generate_video: ai_fashion_house.agents.marketing_agent.veo.generate_video
+  get_authenticated_genai_client: ai_fashion_house.utils.gcp_utils.get_authenticated_genai_client
+  get_fashion_model_details: ai_fashion_house.agents.fashion_design_agent.tools.get_fashion_model_details
+  get_image_caption_prompt: ai_fashion_house.agents.marketing_agent.prompts.get_image_caption_prompt
+  get_instructions: ai_fashion_house.agents.met_rag_agent.prompts.get_instructions
+  google_search: google.adk.tools.google_search
+  Image: PIL.Image
+  InMemoryArtifactService: google.adk.artifacts.InMemoryArtifactService
+  InMemoryRunner: google.adk.runners.InMemoryRunner
+  InMemorySessionService: google.adk.sessions.InMemorySessionService
+  List: typing.List
+  LlmRequest: google.adk.models.llm_request.LlmRequest
+  load_artifacts: google.adk.tools.load_artifacts
+  load_dotenv: dotenv.load_dotenv
+  logging: logging
+  met_rag_agent: ai_fashion_house.agents.met_rag_agent.agent.root_agent
+  mimetypes: mimetypes
+  Optional: typing.Optional
+  os: os
+  ParallelAgent: google.adk.agents.ParallelAgent
+  parse_gcs_uri: ai_fashion_house.utils.gcp_utils.parse_gcs_uri
+  Path: pathlib.Path
+  pd: pandas
+  pil_image_to_png_bytes: ai_fashion_house.utils.image_utils.pil_image_to_png_bytes
+  retrieve_met_images: ai_fashion_house.agents.met_rag_agent.tools.retrieve_met_images
+  root_agent: ai_fashion_house.agents.marketing_agent.agent.root_agent
+  Runner: google.adk.Runner
+  search_agent: ai_fashion_house.agents.search_agent.agent.root_agent
+  SequentialAgent: google.adk.agents.SequentialAgent
+  storage: google.cloud.storage
+  time: time
+  ToolContext: google.adk.tools.ToolContext
+  traceback: traceback
+  typer: typer
+  types: google.genai.types
+  typing: typing
+  upload_media_file_to_gcs: ai_fashion_house.utils.gcp_utils.upload_media_file_to_gcs
+  uuid: uuid
+  uvicorn: uvicorn
+  web: web.web
+  WebSocket: fastapi.WebSocket
+  WebSocketDisconnect: fastapi.WebSocketDisconnect
+
+functions:
+  __str__:
+    type: sync
+    module: src.ai_fashion_house.agents.met_rag_agent.tools
+    args: [self]
+  before_agent_callback:
+    type: async
+    module: src.ai_fashion_house.agents.fashion_design_agent.agent
+    args: [callback_context]
+    params:
+      returns: typing.Optional[types.Content]
+  before_model_callback:
+    type: async
+    module: src.ai_fashion_house.agents.fashion_design_agent.agent
+    args: [callback_context, llm_request]
+  call_agent_async:
+    type: async
+    module: main
+    args: [agent, prompt]
+    params:
+      returns: None
+  caption_image:
+    type: sync
+    module: src.ai_fashion_house.agents.marketing_agent.veo
+    args: [image_uri]
+    params:
+      returns: str
+  create_adk_session:
+    type: async
+    module: src.ai_fashion_house.web.api
+    args: [root_agent, user_id, session_id]
+    params:
+      returns: InMemoryRunner
+  dispatch_fastapi_app:
+    type: sync
+    module: src.ai_fashion_house.cli
+    args: [app, host, port, workers, reload]
+    params:
+      returns: None
+  enhance_query:
+    type: sync
+    module: src.ai_fashion_house.agents.met_rag_agent.tools
+    args: [query]
+    params:
+      returns: str
+  execute_sql_bigquery:
+    type: sync
+    module: src.ai_fashion_house.agents.met_rag_agent.tools
+    args: [sql]
+    params:
+      returns: pd.DataFrame
+  extract_start_end_year_from_prompt:
+    type: sync
+    module: src.ai_fashion_house.agents.met_rag_agent.tools
+    args: [prompt]
+    params:
+      returns: TimePeriod
+  generate_image:
+    type: async
+    module: src.ai_fashion_house.agents.marketing_agent.imagen
+    args: [enhanced_prompt, tool_context]
+    params:
+      returns: typing.Dict
+  generate_video:
+    type: async
+    module: src.ai_fashion_house.agents.marketing_agent.veo
+    args: [image_gcs_uri, tool_context]
+  handle_event:
+    type: async
+    module: src.ai_fashion_house.web.api
+    args: [event, websocket]
+    params:
+      returns: None
+  lifespan:
+    type: async
+    module: src.ai_fashion_house.web.api
+    args: [app]
+  main:
+    type: sync
+    module: src.ai_fashion_house.cli
+  mount_apps:
+    type: sync
+    module: src.ai_fashion_house.web.app
+    args: [app]
+  retrieve_met_images:
+    type: async
+    module: src.ai_fashion_house.agents.met_rag_agent.tools
+    args: [user_query, top_k, search_fraction, tool_context]
+    params:
+      returns: dict
+  root:
+    type: async
+    module: src.ai_fashion_house.web.api
+    params:
+      returns: dict
+  run_retrieve_met_images_sync:
+    type: sync
+    module: src.ai_fashion_house.agents.met_rag_agent.tools
+    args: [user_query, top_k, search_fraction, tool_context]
+    params:
+      returns: dict
+  save_generated_image:
+    type: async
+    module: src.ai_fashion_house.agents.marketing_agent.imagen
+    args: [image, output_folder, tool_context]
+    params:
+      returns: None
+  save_generated_video:
+    type: async
+    module: src.ai_fashion_house.agents.marketing_agent.veo
+    args: [video, output_folder, tool_context]
+    params:
+      returns: None
+  search_fashion_embeddings:
+    type: sync
+    module: src.ai_fashion_house.agents.met_rag_agent.tools
+    args: [query, top_k, search_fraction, time_period]
+    params:
+      returns: pd.DataFrame
+  send_artifacts:
+    type: async
+    module: src.ai_fashion_house.web.api
+    args: [runner, user_id, session_id, websocket]
+    params:
+      returns: None
+  send_state:
+    type: async
+    module: src.ai_fashion_house.web.api
+    args: [runner, user_id, session_id, websocket]
+    params:
+      returns: None
+  setup_rag:
+    type: sync
+    module: src.ai_fashion_house.cli
+  start:
+    type: sync
+    module: src.ai_fashion_house.cli
+    args: [host, port, workers, reload, gemini_api_key]
+    params:
+      returns: None
+  try_generate_video:
+    type: sync
+    module: src.ai_fashion_house.agents.marketing_agent.veo
+    args: [prompt, gcs_image_uri]
+    params:
+      returns: types.Video
+  websocket_receiver:
+    type: async
+    module: src.ai_fashion_house.web.api
+    args: [websocket]
+
+variables:
+  APP_NAME:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [find_dotenv()]
+  BIGQUERY_DATASET_ID:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [find_dotenv()]
+  BIGQUERY_EMBEDDINGS_MODEL_ID:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [find_dotenv()]
+  BIGQUERY_REGION:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [find_dotenv()]
+  BIGQUERY_TABLE_ID:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [find_dotenv()]
+  BIGQUERY_VECTOR_INDEX_ID:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [find_dotenv()]
+  GEMINI_API_KEY:
+    type: env
+    params:
+      caller: [os.environ]
+  GOOGLE_API_KEY:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [find_dotenv()]
+  GOOGLE_CLOUD_LOCATION:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [find_dotenv()]
+  GOOGLE_CLOUD_PROJECT:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [find_dotenv()]
+  IMAGEN_MODEL_ID:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [find_dotenv()]
+  MEDIA_FILES_BUCKET_GCS_URI:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [find_dotenv()]
+  OUTPUT_FOLDER:
+    type: env
+    params:
+      caller: [os.getenv, os.environ]
+      path: [find_dotenv()]
+  SESSION_ID:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [find_dotenv()]
+  USER_ID:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [find_dotenv()]
+  VEO2_MODEL_ID:
+    type: env
+    params:
+      caller: [os.getenv]
+      path: [find_dotenv()]
+
+files:
+  assets/fonts:
+    type: literal
+    actions: [read]
+  generated_image.png:
+    type: literal
+    actions: [read]
+    params:
+      caller: [save_generated_image]
+      path: [output_folder]
+  media_files_local_path:
+    type: literal
+    actions: [read, write]
+    params:
+      caller: [Path(OUTPUT_FOLDER), media_files_local_path.mkdir]
+  moodboard.png:
+    type: literal
+    actions: [read]
+    params:
+      caller: [retrieve_met_images]
+      path: [output_folder]
+  open-source/ai-fashion-house/outputs/generated_image_1.png:
+    type: variable
+    actions: [read]
+    params:
+      caller: [aiofiles.open, os.path.basename]
+  output_file:
+    type: variable
+    actions: [read]
+    params:
+      caller: [moodboard_image.save]
+  output_folder:
+    type: variable
+    actions: [write]
+    params:
+      caller: [output_folder.mkdir]
+  output_path:
+    type: variable
+    actions: [read, write]
+    params:
+      caller: [image.save, aiofiles.open]
